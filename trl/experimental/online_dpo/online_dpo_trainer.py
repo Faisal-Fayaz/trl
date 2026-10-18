@@ -271,6 +271,7 @@ class OnlineDPOTrainer(_BaseTrainer):
         # reproducibility.
         set_seed(args.seed)
         model_init_kwargs = args.model_init_kwargs or {}
+        model_id_or_path = model if isinstance(model, str) else None
         if isinstance(model, str):
             model_id = model
 
@@ -301,20 +302,24 @@ class OnlineDPOTrainer(_BaseTrainer):
 
         # Handle processing_class (optional): load it from the model when omitted, mirroring other trainers.
         if processing_class is None:
-            model_name_or_path = model if isinstance(model, str) else getattr(getattr(model, "config", None), "_name_or_path", None)
+            model_name_or_path = model_id_or_path
+            if model_name_or_path is None:
+                model_name_or_path = getattr(getattr(model, "config", None), "_name_or_path", None)
             if model_name_or_path is not None:
-                model_init_kwargs = args.model_init_kwargs or {}
+                init_kwargs = args.model_init_kwargs or {}
                 processing_class = AutoTokenizer.from_pretrained(
                     model_name_or_path,
-                    revision=model_init_kwargs.get("revision"),
+                    revision=init_kwargs.get("revision"),
                     trust_remote_code=args.trust_remote_code,
                 )
         if processing_class is not None:
-            if getattr(processing_class, "pad_token", None) is None:
-                processing_class.pad_token = processing_class.eos_token
-            model.config.get_text_config().pad_token_id = processing_class.pad_token_id
+            # Unwrap processors to their tokenizer before touching pad tokens.
+            tokenizer = getattr(processing_class, "tokenizer", processing_class)
+            if getattr(tokenizer, "pad_token", None) is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            model.config.get_text_config().pad_token_id = tokenizer.pad_token_id
             if hasattr(model, "generation_config"):
-                model.generation_config.pad_token_id = processing_class.pad_token_id
+                model.generation_config.pad_token_id = tokenizer.pad_token_id
 
         # PEFT
         if peft_config is not None:
